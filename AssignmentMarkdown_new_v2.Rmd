@@ -1,0 +1,251 @@
+---
+title: "Assignment Practical Machine Learning"
+author: "HM Schaink"
+date: "March 7th, 2019"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This project deals with research on Human Activity Recognition. The aim of this project is to predict the type of activity that is done by a test person on basis of measurements performed by wearable accelleometers on the belt, forearm, arm, and dumbbell. The data is collected using 6 test persons, who performed 5 different activities: sitting, sitting down, standing up, standing, walking.
+
+The data used in this project is obtained from: http://groupware.les.inf.puc-rio.br/har On this website more information about this experiment can be found.
+
+This project is done in partial fulfilment of the Coursera course 'Practical machine learning'.
+
+```{r,libraries, message=FALSE, error=FALSE, warning=FALSE}
+  library(graphics); library(ggplot2); library(caret); library(dplyr); library(knitr)
+```
+
+The data is read initially as character variables, in order to prevent format errors later on in the code. The data is later converted to numericals in order to be able to perform the calculations. The dimension of the training set is equal to
+
+```{r,input_training}
+  trainingSet<-read.csv("pml-training.csv",colClasses="character")
+  print(dim(trainingSet))
+```
+
+The dimension of the testing set is equal to
+
+```{r, input_testing}
+  testingSet<-read.csv("pml-testing2.csv",colClasses="character")
+  print(dim(testingSet))
+```
+
+It is clear that the training set is sufficiently large to separate it into a new training set and a validation set. The new training set will be used to develop the machine learning algorithm, the validation set is used to optimize the model. These sets are created next. The diemnsions ot these sets are 
+
+```{r, create_validation1}
+  set.seed(13234)
+  inTrain<-createDataPartition(y=trainingSet$classe,p=0.7,list=FALSE)
+  trainingSet2<-trainingSet[inTrain,]
+  print(dim(trainingSet2))
+  validation2<-trainingSet[-inTrain,]
+  print(dim(validation2))
+```
+## Exploration and reduction of the data
+
+A first impression of the data is obtained using the tests
+```{r,head, results='hide'}
+print(head(trainingSet2))
+print(str(trainingSet2))
+```
+
+From these tests it can be learned that:
+
+1. The first columns contain information about the number of the experiment, the test-person, the time and duration of the experiments etc. This information can be omitted from the calculation
+2. The measurement data are presented in columns 9-159
+3. The last column (classe) contains information about the specific exercise, which are labeled by the factors A, B, C, D, E. The machine learning algorithm should be able to predict these values on basis of the experimental results.
+4. Several columns have titles that start with "stddev". Apparently these columns contain information about the standard deviations of the experiments. It would be unwise to give the data in these columns the same numerical treatment as the actual experimental values. For this reason these columns will be omited from the analysis.
+
+### Reducing and reformatting the data set
+
+First, a function is written that 
+
+a) omits the first 8 columns from the data (see points 1. and 2.)
+b) reformats columns containing numerical values formatted as characters (caused by the chosen method for reading the data), to columns containing numericals.
+
+```{r, reformat_data,results="hide",error=FALSE,warning=FALSE}
+newData<-function(DataSet) {
+  number_of_columns<-ncol(DataSet)
+  columnNames<-colnames(DataSet)
+  trainClass<-select(DataSet,columnNames[number_of_columns])
+  
+  istart<-8
+  iend<-number_of_columns-1
+  dd<-select(DataSet,istart:iend)
+  newTrain<-sapply(dd,as.numeric)
+  
+## ########## The classe column is attached to the data ############
+  newTrain<-cbind(newTrain,trainClass)
+}
+```
+
+Applying this function to the training set yields a data set with the dimension
+```{r, reformat_data2,results="hide",error=FALSE,warning=FALSE}
+trainingSet3<-newData(trainingSet2)
+```
+```{r,print}
+print(dim(trainingSet3))
+```
+
+Next, the columns refering to the standard deviations are removed from the dataset (see point 4. above).
+
+```{r, omit_stddev}
+newTrain<-trainingSet3
+selectTrain<-select(newTrain,-starts_with("stddev"))
+print(dim(selectTrain))
+```
+
+At this stage an exploratory plot of the data is made. First, the data is sorted by the outcome presented in the column classe. Next the mean value is calculated for each experiment and each classe. The results are shown in the figure below, in which each classe is represented by a specific color.
+
+```{r, prepare_plot}
+dataClassA<-filter(selectTrain,as.character(classe)=="A")
+dataClassA_mean<-sapply(dataClassA[,-141],mean,na.rm=FALSE)
+
+dataClassB<-filter(selectTrain,as.character(classe)=="B")
+dataClassB_mean<-sapply(dataClassB[,-141],mean,na.rm=FALSE)
+
+dataClassC<-filter(selectTrain,as.character(classe)=="C")
+dataClassC_mean<-sapply(dataClassC[,-141],mean,na.rm=FALSE)
+                   
+dataClassD<-filter(selectTrain,as.character(classe)=="D")
+dataClassD_mean<-sapply(dataClassD[,-141],mean,na.rm=FALSE)
+
+dataClassE<-filter(selectTrain,as.character(classe)=="E")
+dataClassE_mean<-sapply(dataClassE[,-141],mean,na.rm=FALSE)
+
+barplot(c(dataClassA_mean,dataClassB_mean,dataClassC_mean,dataClassD_mean,dataClassE_mean),
+        col=c("red","blue","green","black","purple"),
+        border=c("red","blue","green","black","purple"),beside=TRUE,
+        legend.tex=c("A","B","C","D","E"),
+        xlab="test",ylab="average result")
+```
+
+*** 
+
+**Figure 1 ** _An exploratory barplot showing along the x-axis all 140 tests in the data set, and along the y-axis the average of the observed values for each of these tests for each of the execises A (red), B (blue), C (green), D (black), E (purple)_
+
+***
+
+From the exploratory plot it can be seen that only a limited number of detectors contribute to the measured muscle-activity. Furthermore, the plot shows that it should be possible to use this dataset, to distinguish between the different exercises A. B, C, D, E.
+
+First, a check is performed for near zero values in the data set. These near zero variables are to be omitted from the training set. The columns with near zero variables are:
+
+```{r,near_zero}
+selectTrain[is.na(selectTrain)]<-0
+
+nzv<-nearZeroVar(selectTrain,saveMetrics=TRUE)    
+
+nzvNames<-row.names(nzv)
+numberOfRows<-nrow(nzv)
+
+rNumber<-c(1:numberOfRows)
+nzv<-cbind(nzv,rNumber)
+nzv<-cbind(nzv,nzvNames)
+
+nzvTT<-filter(nzv,(zeroVar==TRUE&nzv==TRUE))
+
+nzvNamesTT<-(select(nzvTT,nzvNames))
+nzvNumbers<-select(nzvTT,rNumber)
+numberOfNZV<-nrow(nzvNumbers)
+
+selectTrain_names<-names(selectTrain)
+NZV_variables<-selectTrain_names[rNumber[1:numberOfNZV]]
+selectTrain_2<-select(selectTrain,-NZV_variables)
+
+print(NZV_variables)
+```
+
+Furthermore, it is possible to omit the variables that contain only NA-values (which were set to zero in the previous block of code. These variables are
+```{r,all_NA}
+
+numberOfRows<-nrow(selectTrain_2)
+colAllNa<-colSums(selectTrain_2==0)
+allNa<-colAllNa[colAllNa==numberOfRows]
+allNa_names<-names(allNa)
+selectTrain_3<-select(selectTrain_2,-allNa_names)
+print(allNa_names)
+```
+It is rather surprising that the last reduction finds variables that were not detected by the near zero value approach...
+
+The steps performed above have reduced the dimension of the data set to
+
+```{r,dat dimension}
+print(dim(selectTrain_3))
+```
+
+In view of the exploration plot given above, it should be possible to reduce that data-set even further. However, at this point it is decided to start developing the model.
+
+## Training the models
+
+This project deals with a classifaction of the measured signals, Therefore, first the data is studied using the random forest model. 
+
+```{r, random tree}
+## modFit1<-train(as.factor(classe)~. ,data=selectTrain_3,method="rpart")
+## print((modFit1)
+```
+The accuracy is found to be of the order of 0,5, which is quite low. Therefore, this model will not be investigated further.
+
+The second method tried is a bagging method.   It needs about 10 minutes to complete when the default setting for the cross-validations (25) is used. However, the accuracy is found to be very high (0,964). In order to reduce the calculation-time, the number of cross-validations was set to 5. This did not affect the accuracy seriously.
+
+```{r, bagging_with_treebag}
+trcntrl<-trainControl(method="cv",number=5)
+modFit2<-train(classe~. ,data=selectTrain_3,method="treebag",trControl=trcntrl)
+print((modFit2))
+```
+
+Boosting using the method gbm and the random forest methods were also tested and were found to be very time consuming and were stopped before the end of the run. 
+
+## Validation of the method
+
+First the validation data should be reduced using the same pre-processing steps as applied to the training data, using the results obtained in the trainng step. This is done in the steps below:
+
+1. The relevant columns wth measurement data are selected,and converted from character data to numerical data
+2. The columns with titles refering to stddev are omited,
+3. All NA entries are replaced by the value 0
+4. The columns which in the training set do represent near zero variables are omitted
+5. The columns which contain only 0 are omitted
+
+```{r, re-format validation,error=FALSE,warning=FALSE}
+validation3<-newData(validation2)
+validation3<-select(validation3,-starts_with("stddev"))
+validation3[is.na(validation3)]<-0
+validation3<-select(validation3,-NZV_variables)
+validation3<-select(validation3,-allNa_names)
+print(dim(validation3))
+```
+
+The validation of te bagging with trees model bagging with trees yield the following confusion matrix:
+```{r, validation bagging with trees}
+val<-predict(modFit2,newdata=validation3,na.action=na.pass)
+print(confusionMatrix(val,as.factor(validation3$classe)))
+```
+It is clear that the bagging with trees method performs very well.
+
+## Testing of the method
+
+Now the bagging method is used to predict the classe of activities in the test data. As in the validation step, it is necessary that the test data should be pre-process on a similar manner as the training data, using the results obtaining in the training step. These steps are described in detail in the description of the validation. 
+
+```{r, re-format test,error=FALSE,warning=FALSE}
+test3<-newData(testingSet)
+test3<-select(test3,-starts_with("stddev"))
+test3[is.na(test3)]<-0
+test3<-select(test3,-NZV_variables)
+test3<-select(test3,-allNa_names)
+print(dim(test3))
+```
+
+The resulting predictions for the test data are:
+```{r, test}
+val_2<-predict(modFit2,newdata=test3,na.action=na.pass)
+print(val_2)
+```
+
+
+
